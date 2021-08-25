@@ -7,13 +7,13 @@ def write(subject, userid, content):
 
     count = 0
     for f in os.listdir("./data/"):
-        if re.match(r"S\d{3}P\d{3}.disbo", f):
+        if re.match(f"S\d{str(subject).zfill(3)}P\d{3}.disbo", f):
             count += 1
 
     postno = count + 1
 
     wfile = open(
-        f"data/S{str(subject).zfill}P{str(postno).zfill(3)}.disbo",
+        f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
         "w",
         encoding="UTF-8",
     )

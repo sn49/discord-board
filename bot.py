@@ -1,4 +1,5 @@
 from re import I
+import re
 from discord.ext import commands
 import discord
 import json
@@ -113,6 +114,8 @@ async def read(ctx, subject=None, postno=None):
             await ctx.send(subtext)
             return
 
+        subject = subject.zfill(3)
+
         if postno == None:
 
             for f in os.listdir("./data/"):
@@ -121,7 +124,11 @@ async def read(ctx, subject=None, postno=None):
             await ctx.send(f"{subtext}의 글 개수 : {count}개")
         else:
             try:
-                post = open(f"data/S{subject}P{postno}", "r", encoding="UTF-8")
+                post = open(
+                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
+                    "r",
+                    encoding="UTF-8",
+                )
                 content = post.readlines()
                 await ctx.send(content[0] + subtext + "\n" + content[2])
             except:
@@ -141,6 +148,112 @@ async def read(ctx, subject=None, postno=None):
                     await ctx.send(sendtext)
                 else:
                     await ctx.send("존재하지 않는 글")
+
+
+@bot.command()
+async def agree(ctx, subject=None, postno=None):
+    count = 0
+
+    if subject == None:
+        await ctx.send(f"w!agree (subjectno) (postno)")
+        return
+    else:
+        subtext = CheckSubject(subject)[1]
+
+        if subtext == "존재하지 않는 주제 번호":
+            await ctx.send(subtext)
+            return
+
+        subject = subject.zfill(3)
+
+        if postno == None:
+
+            await ctx.send(f"w!agree (subjectno) (postno)")
+        else:
+            try:
+                writer, sayer = CheckPost(subject, postno)
+
+                if ctx.author.id == int(writer):
+                    await ctx.send("자신의 글에 agree 불가")
+                    return
+
+                if str(ctx.author.id) in sayer:
+                    await ctx.send("이미 의견을 표시한 글")
+                    return
+
+                post = open(
+                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
+                    "a",
+                    encoding="UTF-8",
+                )
+                post.write(f"\n{ctx.author.id} - agree")
+                post.close()
+                await ctx.send("agree 완료  ")
+            except:
+                await ctx.send("존재하지 않는 글")
+
+
+@bot.command()
+async def disagree(ctx, subject=None, postno=None):
+    count = 0
+
+    if subject == None:
+        await ctx.send(f"w!disagree (subjectno) (postno)")
+        return
+    else:
+        subtext = CheckSubject(subject)[1]
+
+        if subtext == "존재하지 않는 주제 번호":
+            await ctx.send(subtext)
+            return
+
+        subject = subject.zfill(3)
+
+        if postno == None:
+
+            await ctx.send(f"w!agree (subjectno) (postno)")
+        else:
+            try:
+                writer, sayer = CheckPost(subject, postno)
+
+                if ctx.author.id == int(writer):
+                    await ctx.send("자신의 글에 disagree 불가")
+                    return
+
+                if str(ctx.author.id) in sayer:
+                    await ctx.send("이미 의견을 표시한 글")
+                    return
+
+                post = open(
+                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
+                    "a",
+                    encoding="UTF-8",
+                )
+                post.write(f"\n{ctx.author.id} - disagree")
+                post.close()
+                await ctx.send("disagree 완료")
+            except:
+                await ctx.send("존재하지 않는 글")
+
+
+def CheckPost(subject=None, postno=None):
+    post = open(
+        f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
+        "r",
+        encoding="UTF-8",
+    )
+    postContent = post.readlines()
+    post.close()
+    writer = postContent[1]
+    sayer = postContent[4:]
+
+    index = 0
+    for i in sayer:
+        sayer[index] = re.sub(r"[^0-9]", "", i)
+        index += 1
+
+    print(sayer)
+    return writer, sayer
 
 
 def CheckSubject(subno=None):

@@ -1,4 +1,3 @@
-from re import I
 import re
 from discord.ext import commands
 import discord
@@ -6,6 +5,11 @@ import json
 import datetime
 import datamanage
 import os
+import pymysql
+import string
+import math
+import random
+import urllib.request as ul
 
 version = "CBT TEST"
 activity = discord.Activity(type=discord.ActivityType.watching, name=version)
@@ -18,6 +22,20 @@ owner = importinfo["owner"]
 
 checkmsg = None
 tempSubject = None
+
+
+sqlinfo = open("mysql.json", "r")
+sqlcon = json.load(sqlinfo)
+
+database = pymysql.connect(
+    user=sqlcon["user"],
+    host=sqlcon["host"],
+    db=sqlcon["db"],
+    charset=sqlcon["charset"],
+    password=sqlcon["password"],
+    autocommit=True,
+)
+cur = database.cursor()
 
 
 @bot.event
@@ -35,238 +53,277 @@ async def on_reaction_add(reaction, user):
         if reaction.emoji == "👍" and user.id == owner:
             checkmsg = None
 
-            subjectFile = open("data/subjectlist.txt", "a", encoding="UTF-8")
-            subjectFile.write(f"\n{tempSubject}")
+            sql = f"insert into subjectlist(subjectname) values ({tempSubject})"
+            cur.execute(sql)
 
             await reaction.message.channel.send(f"{tempSubject}\n추가 완료")
             tempSubject = None
 
 
+def CheckRegist(id):
+    sql = f"select count(*) from userlist where userid={id}"
+    cur.execute(sql)
+    result = cur.fetchone()[0]
+
+    return result
+
+
+@bot.command()
+async def profile(ctx, mode=None):
+    if mode == "me":
+        sql = f"select * from userlist where userid={ctx.author.id}"
+        cur.execute(sql)
+        result = cur.fetchone()
+        await ctx.message.author.send(
+            f"{result[2]}point level{result[3]} 마지막 출석 : {result[4]} 정지여부 : {result[5]}"
+        )
+    elif mode == "random":
+        sql = f"select * from userlist order by rand() limit 1"
+        cur.execute(sql)
+        result = cur.fetchone()
+
+        await ctx.send(
+            f"{result[2]}point level{result[3]} 마지막 출석 : {result[4]} 정지여부 : {result[5]}"
+        )
+    else:
+        await ctx.send("random or me")
+
+
 @bot.command()
 async def write(ctx, subject=None, content=None):
-
-    if subject == None:
-        await ctx.send("주제 번호 입력")
+    if CheckRegist(ctx.author.id) == 0:
+        await ctx.send("가입을 해주세요")
         return
-    else:
-        try:
-            subject = int(subject)
-        except:
-            await ctx.send("주제 숫자로 입력")
-            return
-        subtext = CheckSubject(subject)[1]
 
-        if subtext == "존재하지 않는 주제 번호":
-            await ctx.send(subtext)
-            return
+    sql = f"select canwrite from userlist where userid={ctx.author.id}"
+    cur.execute(sql)
+    result = cur.fetchone()[0]
 
+    if result == 0:
         if content == None:
-            await ctx.send(f"{subtext} 내용 입력")
-        else:
-            if content[0] == "^" and content[-1] == "^":
+            sql = f"select subjectname from subjectlist where subindex={subject}"
+            cur.execute(sql)
+            result = cur.fetchone()[0]
 
-                print(content)
+            await ctx.send(f"{result}에 대한 내용 입력")
+        elif len(content) >= 10 and len(content) <= 30:
+            sql = f"select isprocess from subjectlist where subindex={subject}"
+            cur.execute(sql)
+            result = cur.fetchone()[0]
 
-                content = content.replace("^", "")
-                print(content)
+            print(result)
 
-                if len(content) > 30:
-                    await ctx.send("30자 미만으로 작성해주세요.")
-                    return
+            if result == "Y":
+                sql = f"select count(*) from postlist where subjectno={subject}"
+                cur.execute(sql)
+                postcount = cur.fetchone()[0]
 
-                ctime = datetime.datetime.now()
-
-                year = ctime.year
-                month = ctime.month
-                day = ctime.day
-
-                hour = ctime.hour
-                minute = ctime.minute
-                second = ctime.second
-
-                sendtext = f"```\n{year}-{month}-{day}-{hour}-{minute}-{second}\n"
-                sendtext += f"{subtext}\n"
-                sendtext += f"{content}```"
-
-                datamanage.write(subject, ctx.author.id, content)
-
-                await bot.get_channel(channel).send(sendtext)
+                sql = f"insert into postlist(subjectno,postno,writer,content) values ({subject},{postcount+1},{ctx.author.id},'{content}')"
+                print(sql)
+                cur.execute(sql)
+                sql = f"update userlist set point=point+1000"
+                cur.execute(sql)
+                await ctx.send("등록 완료 1000P지급")
             else:
-                await ctx.send('''"^(내용)^"''')
-                return
+                await ctx.send("토론이 끝난 주제입니다.")
+        else:
+            await ctx.send("글자수 10자 이상 30자 이하")
+    else:
+        await ctx.send("글쓰기 정지 상태입니다.")
 
 
 @bot.command()
 async def read(ctx, subject=None, postno=None):
-    count = 0
+    await ctx.send(get_post(subject, postno))
 
-    if subject == None:
-        await ctx.send(f"현재 주제 {CheckSubject()}개")
-        return
-    else:
-        if subject == "all":
-            sfile = open("data/subjectlist.txt", "r", encoding="UTF-8")
-            await ctx.send("현재 토론중인 주제들\n" + sfile.read())
-            return
-        subtext = CheckSubject(subject)[1]
 
-        if subtext == "존재하지 않는 주제 번호":
-            await ctx.send(subtext)
-            return
+def get_post(subno, postno):
+    url = f"http://127.0.0.1:8000/items?subjectno={subno}&postno={postno}"
 
-        subject = subject.zfill(3)
+    request = ul.Request(url)
+    response = ul.urlopen(request)
+    rescode = response.getcode()
 
-        if postno == None:
+    if rescode == 200:
+        responsedata = response.read()
+        print(responsedata)
 
-            for f in os.listdir("./data/"):
-                if f.startswith(f"S{subject}P"):
-                    count += 1
-            await ctx.send(f"{subtext}의 글 개수 : {count}개")
-        else:
-            try:
-                post = open(
-                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
-                    "r",
-                    encoding="UTF-8",
-                )
-                content = post.readlines()
-                await ctx.send(content[0] + subtext + "\n" + content[2])
-            except:
-                if postno == "all":
-                    file_list = os.listdir("data/")
-                    file_list_py = [
-                        file
-                        for file in file_list
-                        if file.endswith(".disbo") and file.startswith(f"S{subject}P")
-                    ]
+        data = responsedata.decode("utf8").replace("<br>", "\n")
 
-                    sendtext = f"{subtext}에 대한 의견들\n"
-                    for i in file_list_py:
-                        print(i)
-                        fi = open("data/" + i, "r", encoding="UTF-8")
-                        sendtext += fi.readlines()[2]
-                    await ctx.send(sendtext)
-                else:
-                    await ctx.send("존재하지 않는 글")
+        return data
+
+    return "fail"
 
 
 @bot.command()
-async def agree(ctx, subject=None, postno=None):
-    count = 0
-
-    if subject == None:
-        await ctx.send(f"w!agree (subjectno) (postno)")
+async def join(ctx):
+    if CheckRegist(ctx.author.id) == 0:
+        await ctx.send("가입을 해주세요")
         return
-    else:
-        subtext = CheckSubject(subject)[1]
 
-        if subtext == "존재하지 않는 주제 번호":
-            await ctx.send(subtext)
-            return
+    sql = f"select level,lastdate from userlist where userid={ctx.author.id}"
 
-        subject = subject.zfill(3)
+    cur.execute(sql)
+    result = cur.fetchone()
 
-        if postno == None:
+    level = result[0]
+    last = result[1]
 
-            await ctx.send(f"w!agree (subjectno) (postno)")
-        else:
-            try:
-                writer, sayer = CheckPost(subject, postno)
-
-                if ctx.author.id == int(writer):
-                    await ctx.send("자신의 글에 agree 불가")
-                    return
-
-                if str(ctx.author.id) in sayer:
-                    await ctx.send("이미 의견을 표시한 글")
-                    return
-
-                post = open(
-                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
-                    "a",
-                    encoding="UTF-8",
-                )
-                post.write(f"\n{ctx.author.id} - agree")
-                post.close()
-                await ctx.send("agree 완료  ")
-            except:
-                await ctx.send("존재하지 않는 글")
-
-
-@bot.command()
-async def disagree(ctx, subject=None, postno=None):
-    count = 0
-
-    if subject == None:
-        await ctx.send(f"w!disagree (subjectno) (postno)")
-        return
-    else:
-        subtext = CheckSubject(subject)[1]
-
-        if subtext == "존재하지 않는 주제 번호":
-            await ctx.send(subtext)
-            return
-
-        subject = subject.zfill(3)
-
-        if postno == None:
-
-            await ctx.send(f"w!agree (subjectno) (postno)")
-        else:
-            try:
-                writer, sayer = CheckPost(subject, postno)
-
-                if ctx.author.id == int(writer):
-                    await ctx.send("자신의 글에 disagree 불가")
-                    return
-
-                if str(ctx.author.id) in sayer:
-                    await ctx.send("이미 의견을 표시한 글")
-                    return
-
-                post = open(
-                    f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
-                    "a",
-                    encoding="UTF-8",
-                )
-                post.write(f"\n{ctx.author.id} - disagree")
-                post.close()
-                await ctx.send("disagree 완료")
-            except:
-                await ctx.send("존재하지 않는 글")
-
-
-def CheckPost(subject=None, postno=None):
-    post = open(
-        f"data/S{str(subject).zfill(3)}P{str(postno).zfill(3)}.disbo",
-        "r",
-        encoding="UTF-8",
-    )
-    postContent = post.readlines()
-    post.close()
-    writer = postContent[1]
-    sayer = postContent[4:]
+    year = datetime.datetime.now().year
+    month = datetime.datetime.now().month
+    day = datetime.datetime.now().day
 
     index = 0
-    for i in sayer:
-        sayer[index] = re.sub(r"[^0-9]", "", i)
-        index += 1
+    temp1 = 0
+    temp2 = 0
 
-    print(sayer)
-    return writer, sayer
+    while level > index:
+        temp1 += 1000 * (index // 5 + 1)
+        index += 5
+
+    for i in range(level):
+        temp2 += (i + 1) * 200
+
+    temp3 = math.floor(0.2 * 1000 * (1.2 ** (level - 1)))
+
+    todayp = temp1 + temp2 + temp3
+
+    if last == int(f"{year}{month}{day}"):
+        await ctx.send("이미 출첵함")
+    else:
+        sql = f"update userlist set point=point+{todayp}, lastdate={year}{month}{day}"
+        cur.execute(sql)
+        await ctx.send(f"{todayp}P 지급 완료")
+
+
+def CheckPost(subjectno=None, postno=None):
+    if subjectno == None:
+        sql = "select subindex,subjectname from subjectlist where isprocess='Y'"
+
+        reli = exesql(sql)
+
+        sendtext = f"토론중인 주제 개수 : {len(reli)}개\n"
+
+        for i in reli:
+            sendtext += f"{i[0]} {i[1]}\n"
+
+        result = sendtext
+    else:
+        sql = f"select subjectname from subjectlist where subindex={subjectno}"
+        cur.execute(sql)
+        subjectstr = cur.fetchone()[0]
+        if postno == None:
+            sql = f"select count(*) from postlist where subjectno={subjectno}"
+            cur.execute(sql)
+            result = f"{subjectstr}의 글 개수\n{cur.fetchone()[0]}개"
+        else:
+
+            sql = f"select content from postlist where subjectno={subjectno} and postno={postno}"
+            cur.execute(sql)
+            result = f"{subjectstr}의 {postno}번째 글\n" + cur.fetchone()[0]
+
+    return result
+
+
+def exesql(sql):
+    cur.execute(sql)
+    return cur.fetchall()
+
+
+def givePoint(userid, point):
+    sql = f"update userlist set point=point+{point} where userid={userid}"
+    cur.execute(sql)
 
 
 def CheckSubject(subno=None):
 
-    sublist = open("data/subjectlist.txt", "r", encoding="UTF-8").readlines()
+    sql = "select * from subjectlist"
+    cur.execute()
+    result = cur.fetchall()
 
     if subno == None:
-        return len(sublist)
 
-    if int(subno) > len(sublist):
+        return len(result)
+
+    if int(subno) > result:
         return False, "존재하지 않는 주제 번호"
     else:
-        return True, sublist[int(subno) - 1]
+        return True, result[int(subno) - 1][1]
+
+
+@bot.command()
+async def regist(ctx):
+    result = CheckRegist(ctx.author.id)
+    if result == 0:
+        randstr = ""
+        string_pool = string.ascii_letters + string.digits
+        for i in range(20):
+            randstr += random.choice(string_pool)
+        sql = f"insert into userlist(userid,nickname) values ({ctx.author.id},'{randstr}')"
+        cur.execute(sql)
+        await ctx.send("가입 완료")
+    else:
+        await ctx.send("이미 가입되어있습니다.")
+
+
+@bot.command()
+async def levelup(ctx):
+    # 가입 체크
+    result = CheckRegist(ctx.author.id)
+    if result == 0:
+        await ctx.send("가입을 해주세요.")
+        return
+
+    # 레벨 체크
+    sql = f"select level,point from userlist where userid={ctx.author.id}"
+
+    cur.execute(sql)
+    result = cur.fetchone()
+
+    level = result[0]
+    point = result[1]
+
+    if level == 50:
+        await ctx.send("만렙입니다.")
+        return
+
+    # 비용, 포인트 체크
+    cost = math.floor(1000 * (1.2 ** (level - 1)))
+
+    if point >= cost:
+        # 포인트 차감
+        sql = f"update userlist set point=point-{cost} where userid={ctx.author.id}"
+        cur.execute(sql)
+
+        success = 100
+        # 확률 구하기
+        for i in range(level):
+            if (i + 1) % 10 == 9:
+                success /= 2
+            elif (i + 1) % 10 == 0:
+                success = math.floor(success * 1.5) + 10
+            else:
+                success -= 2.3
+
+        print((level, success))
+
+        # 등업 시도
+        dice = random.random() * 100
+
+        # 성공시 렙업
+        if dice < success:
+            sql = f"update userlist set level=level+1 where userid={ctx.author.id}"
+            cur.execute(sql)
+            await ctx.send("성공")
+        # 실패시 럭키팡 적립(비용의 30%)
+        else:
+            sql = f"update numstat set sum=sum+{math.floor(cost*0.3)} where name='stackluckypang'"
+            cur.execute(sql)
+            await ctx.send("레벨업에 실패하여 비용의 30% 럭키팡 적립")
+
+    else:
+        await ctx.send("포인트가 부족합니다.")
+        return
 
 
 @bot.command()
@@ -287,4 +344,7 @@ async def addsubject(ctx, subject=None):
         await ctx.send("봇의 관리자만 주제를 추가할수 있습니다.")
 
 
+# 정지 먹일때 필요한것
+print(datetime.datetime.now().timestamp())
+print((datetime.datetime.now() + datetime.timedelta(days=3)).timestamp())
 bot.run(token)
